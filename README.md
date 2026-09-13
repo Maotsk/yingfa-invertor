@@ -51,50 +51,38 @@ ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
 ESP8266 создаёт лишнюю нагрузку и дополнительные записи во флеш-память,
 сокращая срок службы устройства.
 
-### Сенсоры, которые нужно создать в HA
+Настройка Energy Dashboard состоит из двух шагов:
 
-Используй хелпер **Интегральный** (Integral, Riemann sum) для преобразования
-мгновенной мощности (W) в энергию (kWh):
+1. **Мощности (W)** — часть сенсоров уже есть в ESPHome, часть нужно
+   вычислить через помощник **Шаблон**.
+2. **Энергии (kWh)** — все сенсоры создаются через помощник
+   **Интегральный** (в некоторых версиях русской локализации — **Интеграл**).
 
-| Источник (W) | Целевой сенсор (kWh) | Назначение |
-|---|---|---|
-| `sensor.yingfa_invertor_ac_output_active_power` | `sensor.yingfa_invertor_ac_energy` | Потребление от инвертора |
-| `sensor.yingfa_invertor_pv_charging_power` | `sensor.yingfa_invertor_pv_energy` | Выработка солнечных панелей |
-| `sensor.battery_charge_power` | `sensor.battery_charge_energy` | Заряд батареи |
-| `sensor.battery_discharge_power` | `sensor.battery_discharge_energy` | Разряд батареи |
+### Шаг 1. Сенсоры мощности (W)
 
-### Как создать хелпер
+#### Уже есть в ESPHome (готовы к использованию)
 
-1. **Настройки → Устройства и службы → Помощники → + Создать помощника**
-2. Выбери **Интегральный**
-3. Заполни:
-   - **Название:** `Yingfa Inverter AC Energy`
-   - **Входной сенсор:** `sensor.yingfa_invertor_ac_output_active_power`
-   - **Метод интегрирования:** `Trapezoidal`
-   - **Префикс единицы:** `k`
-   - **Единица времени:** `h`
-4. Повтори для PV (`sensor.yingfa_invertor_pv_charging_power`).
+| Сенсор | Что измеряет |
+|---|---|
+| `sensor.yingfa_invertor_ac_output_active_power` | Мощность на выходе инвертора |
+| `sensor.yingfa_invertor_pv_charging_power` | Мощность от солнечных панелей |
 
-### Требования к исходным сенсорам
-
-Исходные сенсоры (мощность в W) должны иметь:
-
+Проверь в **Developer Tools → States**, что у них есть:
 - `device_class: power`
 - `state_class: measurement`
 
-Эти атрибуты уже заданы в конфиге ESPHome — проверь в
-**Developer Tools → States**, что они на месте.
+Эти атрибуты уже заданы в конфиге ESPHome.
 
-### Сенсоры батареи — мощность (W)
+#### Нужно создать в HA через помощник «Шаблон»
 
 Home Assistant не умеет перемножать сенсоры напрямую, поэтому мощность
-батареи (заряд и разряд) нужно вычислить через помощник **Шаблон**.
+батареи (заряд и разряд) вычисляется шаблоном. Формула: **напряжение × ток**.
 
-**Создание через веб-интерфейс:**
+**Создание:**
 
 1. **Настройки → Устройства и службы → Помощники → + Создать помощника**
 2. Выбери **Шаблон** → **Шаблонный сенсор**
-3. Заполни поля (см. таблицы ниже).
+3. Заполни поля по таблицам ниже.
 
 **Battery Charge Power (мощность заряда):**
 
@@ -132,27 +120,30 @@ Home Assistant не умеет перемножать сенсоры напря�
 > `sensor.battery_voltage` вместо `sensor.yingfa_invertor_battery_voltage`),
 > поправь в шаблоне. Точные имена видны в **Developer Tools → States**.
 
-### Сенсоры батареи — энергия (kWh)
+### Шаг 2. Сенсоры энергии (kWh)
 
-Из мощностей (W) нужно получить энергию (kWh) — через помощник
-**Интегральный** (Riemann sum integral).
+Все четыре сенсора энергии создаются одинаково — через помощник
+**Интегральный** (Riemann sum integral). Он берёт мгновенную мощность
+в ваттах и накапливает её в киловатт-часах.
+
+**Создание:**
 
 1. **Настройки → Устройства и службы → Помощники → + Создать помощника**
-2. Выбери **Интегральный**
-3. Заполни:
+2. Выбери **Интегральный** (в некоторых версиях — **Интеграл**)
+3. Заполни поля по таблице ниже — для каждого сенсора отдельно.
 
-| Поле | Battery Charge | Battery Discharge |
-|---|---|---|
-| Название | `Battery Charge Energy` | `Battery Discharge Energy` |
-| Входной сенсор | `sensor.battery_charge_power` | `sensor.battery_discharge_power` |
-| Метод интегрирования | `Trapezoidal` | `Trapezoidal` |
-| Префикс единицы | `k` | `k` |
-| Единица времени | `h` | `h` |
+| Поле | AC Energy | PV Energy | Battery Charge Energy | Battery Discharge Energy |
+|---|---|---|---|---|
+| **Название** | `Yingfa Inverter AC Energy` | `Yingfa Inverter PV Energy` | `Battery Charge Energy` | `Battery Discharge Energy` |
+| **Входной сенсор** | `sensor.yingfa_invertor_ac_output_active_power` | `sensor.yingfa_invertor_pv_charging_power` | `sensor.battery_charge_power` | `sensor.battery_discharge_power` |
+| **Метод интегрирования** | `Trapezoidal` | `Trapezoidal` | `Trapezoidal` | `Trapezoidal` |
+| **Префикс единицы** | `k` | `k` | `k` | `k` |
+| **Единица времени** | `h` | `h` | `h` | `h` |
 
-### Добавление в Energy Dashboard
+### Шаг 3. Добавление в Energy Dashboard
 
 1. **Настройки → Панели → Энергия**
-2. В разделе **Individual devices** добавь созданные хелперы:
+2. В разделе **Individual devices** (Отдельные устройства) добавь:
    - `Yingfa Inverter AC Energy`
    - `Yingfa Inverter PV Energy`
 3. В разделе **Батарея** добавь:
@@ -165,7 +156,7 @@ Home Assistant не умеет перемножать сенсоры напря�
 - **Не используй** платформу `integration` в ESPHome — это создаёт
   дополнительную нагрузку на ESP8266 и изнашивает флеш-память.
 - `device_class: energy` и `state_class: total_increasing` HA
-  проставит автоматически при создании хелпера **Интегральный**.
+  проставит автоматически при создании помощника **Интегральный**.
 - Не добавляй `sensor.battery_voltage` или
   `sensor.battery_charging_current` в Energy Dashboard напрямую —
   они не в кВт·ч и не `total_increasing`.
