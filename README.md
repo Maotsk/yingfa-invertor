@@ -39,7 +39,7 @@ ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
   Max Charging Current (MNCHGC), Charger Source Priority (PCP).
 - **Number (поле ввода):** напряжения батареи PBCV (re-charge),
   PBDV (re-discharge), PCVV (C.V.), PSDV (cut-off).
-- **Кнопка:** ручной запуск slow poll.
+- **Кнопки:** ручной запуск slow poll, перезагрузка ESP.
 
 ## Интеграция с Energy Dashboard Home Assistant
 
