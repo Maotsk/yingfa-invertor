@@ -1,5 +1,10 @@
 # Yingfa 6.2kW PI30 Inverter — ESPHome Monitoring
 
+![ESPHome](https://img.shields.io/badge/ESPHome-2024.6%2B-blue)
+![ESP8266](https://img.shields.io/badge/MCU-ESP8266-green)
+![Protocol](https://img.shields.io/badge/protocol-PI30-orange)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
+
 Мониторинг и управление инвертором **Yingfa 6.2kW** (протокол PI30) через
 ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
 
