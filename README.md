@@ -40,6 +40,59 @@ ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
   PBDV (re-discharge), PCVV (C.V.), PSDV (cut-off).
 - **Кнопка:** ручной запуск slow poll.
 
+## Интеграция с Energy Dashboard Home Assistant
+
+Расчёт энергии (кВт·ч) выполняется **на стороне Home Assistant**, а не на ESP.
+Это осознанное решение: интеграция на ESP8266 создаёт лишнюю нагрузку
+и дополнительные записи во флеш-память, сокращая срок службы устройства.
+
+### Сенсоры, которые нужно создать в HA
+
+Используй хелпер **Integral** (Riemann sum integral) для преобразования
+мгновенной мощности (W) в энергию (kWh):
+
+| Источник (W) | Целевой сенор (kWh) | Назначение |
+|---|---|---|
+| `sensor.yingfa_invertor_ac_output_active_power` | `sensor.yingfa_invertor_ac_energy` | Потребление от инвертора |
+| `sensor.yingfa_invertor_pv_charging_power` | `sensor.yingfa_invertor_pv_energy` | Выработка солнечных панелей |
+
+### Как создать хелпер
+
+1. Открой **Settings → Devices & Services → Helpers**.
+2. Нажми **Create Helper** → **Integration**.
+3. Заполни:
+   - **Name:** `Yingfa Inverter AC Energy`
+   - **Input sensor:** `sensor.yingfa_invertor_ac_output_active_power`
+   - **Integration method:** `Trapezoidal`
+   - **Unit prefix:** `k`
+   - **Time unit:** `h`
+4. Повтори для PV (`sensor.yingfa_invertor_pv_charging_power`).
+
+### Требования к исходным сенсорам
+
+Исходные сенсоры (мощность в W) должны иметь:
+- `device_class: power`
+- `state_class: measurement`
+
+Эти атрибуты уже заданы в конфиге ESPHome — проверь в
+**Developer Tools → States**, что они на месте.
+
+### Добавление в Energy Dashboard
+
+1. Открой **Settings → Dashboards → Energy**.
+2. В разделе **Individual devices** нажми **Add device**.
+3. Выбери созданные хелперы:
+   - `Yingfa Inverter AC Energy`
+   - `Yingfa Inverter PV Energy`
+4. Сохрани.
+
+### Важно
+
+- **Не используй** платформу `integration` в ESPHome — это создаёт
+  дополнительную нагрузку на ESP8266 и изнашивает флеш-память.
+- `device_class: energy` и `state_class: total_increasing` HA
+  проставит автоматически при создании хелпера Integral.
+
 ## Архитектура
 
 ### Скрипты
