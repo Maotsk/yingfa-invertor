@@ -249,7 +249,9 @@ Intervals are configurable in HA:
    - `wifi_ssid`, `wifi_password`
    - `yingfa_api_key` (your own, not the example!)
    - `yingfa_ap_password` (your own, not the example!)
-3. Check `device_ip` in `substitutions` — must match the ESP IP.
+3. Set `device_ip` in `substitutions` — your ESP's IP on the local network.
+   If you don't know it, check your router (DHCP leases) or the ESPHome
+   Dashboard. Without this, OTA and API connection will not work.
 4. Compile and flash:
 
    ```bash
