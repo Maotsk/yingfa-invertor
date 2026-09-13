@@ -1,0 +1,1472 @@
+substitutions:
+  name: yingfa-invertor
+  device_description: "Yingfa 6.2kW PI30 inverter RS232"
+  device_ip: "192.168.68.219"
+
+
+# =========================================================
+# ESPHOME
+# =========================================================
+
+esphome:
+  name: ${name}
+  comment: ${device_description}
+  min_version: 2024.6.0
+
+  compile_process_limit: 1
+
+  on_boot:
+    priority: 600
+    then:
+      - lambda: |-
+          id(startup_slow_poll_done) = false;
+          ESP_LOGI("INVERTER", "STARTUP: waiting 30s before initial slow poll");
+      - delay: 30s
+      - script.execute: slow_poll
+      - wait_until:
+          condition:
+            lambda: |-
+              return id(startup_slow_poll_done);
+          timeout: 60s
+      - if:
+          condition:
+            lambda: |-
+              return !id(startup_slow_poll_done);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "STARTUP: slow poll timeout, enabling fast poll");
+                id(startup_slow_poll_done) = true;
+
+      # QVFW — версия прошивки (один раз при запуске)
+      - script.execute:
+          id: pi30_exchange
+          command: "QVFW"
+      - script.wait:
+          id: pi30_exchange
+
+
+# =========================================================
+# ESP8266
+# =========================================================
+
+esp8266:
+  board: nodemcu
+
+
+# =========================================================
+# LOGGER
+# =========================================================
+
+logger:
+  level: DEBUG
+  baud_rate: 0
+
+
+# =========================================================
+# API
+# =========================================================
+
+api:
+  encryption:
+    key: !secret yingfa_api_key
+
+# =========================================================
+# OTA
+# =========================================================
+
+ota:
+  - platform: esphome
+
+
+# =========================================================
+# WIFI
+# =========================================================
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      hidden: true
+
+  ap:
+    ssid: "PVinvertor Fallback Hotspot"
+    password: !secret yingfa_ap_password
+
+  use_address: ${device_ip}
+
+
+captive_portal:
+
+
+# =========================================================
+# TIME
+# =========================================================
+
+time:
+  - platform: sntp
+    id: inverter_time
+    timezone: Europe/Moscow
+    servers:
+      - 88.147.254.230
+      - 85.21.78.8
+      - 194.190.168.1
+
+
+# =========================================================
+# UART
+# =========================================================
+
+uart:
+  id: inverter_uart
+  baud_rate: 2400
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+
+
+# =========================================================
+# GLOBALS
+# =========================================================
+
+globals:
+
+  - id: uart_busy
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: pi30_running
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: slow_poll_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: last_fast_poll_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: last_slow_poll_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: pi30_last_ok
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: startup_slow_poll_done
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # Текстовые переменные для селектов
+  - id: output_source_priority_text
+    type: std::string
+    restore_value: no
+    initial_value: '"Utility First"'
+
+  - id: input_voltage_range_text
+    type: std::string
+    restore_value: no
+    initial_value: '"UPS"'
+
+  - id: max_charging_current_text
+    type: std::string
+    restore_value: no
+    initial_value: '"60 A"'
+
+  - id: charger_source_priority_text
+    type: std::string
+    restore_value: no
+    initial_value: '"Solar + Utility"'
+
+  # Текущий режим инвертора (из QMOD)
+  - id: inverter_mode_text
+    type: std::string
+    restore_value: no
+    initial_value: '"Unknown"'
+
+  # Текущий режим батареи (из QPIRI)
+  - id: battery_type_text
+    type: std::string
+    restore_value: no
+    initial_value: '"Unknown"'
+
+  # Статус ошибок (из QPIWS)
+  - id: inverter_fault_text
+    type: std::string
+    restore_value: no
+    initial_value: '"OK"'
+
+  # Версия прошивки (из QVFW)
+  - id: firmware_version_text
+    type: std::string
+    restore_value: no
+    initial_value: '"Unknown"'
+
+
+# =========================================================
+# НАСТРОЙКИ ИНТЕРВАЛОВ
+# =========================================================
+
+number:
+
+  - platform: template
+    id: fast_poll_interval_sec
+    name: "Fast Poll Interval"
+    icon: "mdi:timer-outline"
+    unit_of_measurement: "s"
+    entity_category: "diagnostic"
+    optimistic: true
+    restore_value: true
+    min_value: 1
+    max_value: 60
+    step: 1
+    initial_value: 3
+    set_action:
+      - lambda: |-
+          ESP_LOGI("INVERTER", "Fast poll interval changed: %.0f s", x);
+
+  - platform: template
+    id: slow_poll_interval_min
+    name: "Slow Poll Interval"
+    icon: "mdi:timer-sync-outline"
+    unit_of_measurement: "min"
+    entity_category: "diagnostic"
+    optimistic: true
+    restore_value: true
+    min_value: 1
+    max_value: 120
+    step: 1
+    initial_value: 20
+    set_action:
+      - lambda: |-
+          ESP_LOGI("INVERTER", "Slow poll interval changed: %.0f min", x);
+
+
+# =========================================================
+# УПРАВЛЕНИЕ НАПРЯЖЕНИЕМ БАТАРЕИ
+# =========================================================
+
+  # PBCV — Напряжение перезаряда (Re-charge)
+  - platform: template
+    name: "Battery Re-charge Voltage"
+    id: battery_recharge_voltage
+    mode: box
+    icon: "mdi:battery-charging-60"
+    unit_of_measurement: "V"
+    device_class: voltage
+    optimistic: true
+    restore_value: true
+    min_value: 44.0
+    max_value: 51.0
+    step: 0.1
+    initial_value: 46.0
+    set_action:
+      - lambda: |-
+          char cmd[16];
+          snprintf(cmd, sizeof(cmd), "PBCV%.1f", x);
+          id(pi30_exchange).execute(std::string(cmd));
+      - script.wait:
+          id: pi30_exchange
+      - delay: 300ms
+      - script.execute:
+          id: pi30_exchange
+          command: "QPIRI"
+      - script.wait:
+          id: pi30_exchange
+
+  # PBDV — Напряжение повторного разряда (Re-discharge)
+  - platform: template
+    name: "Battery Re-discharge Voltage"
+    id: battery_redischarge_voltage
+    mode: box
+    icon: "mdi:battery-arrow-down"
+    unit_of_measurement: "V"
+    device_class: voltage
+    optimistic: true
+    restore_value: true
+    min_value: 48.0
+    max_value: 58.0
+    step: 0.1
+    initial_value: 54.0
+    set_action:
+      - lambda: |-
+          char cmd[16];
+          snprintf(cmd, sizeof(cmd), "PBDV%.1f", x);
+          id(pi30_exchange).execute(std::string(cmd));
+      - script.wait:
+          id: pi30_exchange
+      - delay: 300ms
+      - script.execute:
+          id: pi30_exchange
+          command: "QPIRI"
+      - script.wait:
+          id: pi30_exchange
+
+  # PCVV — Напряжение C.V. (Constant Voltage) заряда
+  - platform: template
+    name: "Battery C.V. Voltage"
+    id: battery_cv_voltage
+    mode: box
+    icon: "mdi:battery-charging-80"
+    unit_of_measurement: "V"
+    device_class: voltage
+    optimistic: true
+    restore_value: true
+    min_value: 48.0
+    max_value: 58.4
+    step: 0.1
+    initial_value: 56.4
+    set_action:
+      - lambda: |-
+          char cmd[16];
+          snprintf(cmd, sizeof(cmd), "PCVV%.1f", x);
+          id(pi30_exchange).execute(std::string(cmd));
+      - script.wait:
+          id: pi30_exchange
+      - delay: 300ms
+      - script.execute:
+          id: pi30_exchange
+          command: "QPIRI"
+      - script.wait:
+          id: pi30_exchange
+
+  # PSDV — Напряжение отключения (Cut-off)
+  - platform: template
+    name: "Battery Cut-off Voltage"
+    id: battery_cutoff_voltage
+    mode: box
+    icon: "mdi:battery-off-outline"
+    unit_of_measurement: "V"
+    device_class: voltage
+    optimistic: true
+    restore_value: true
+    min_value: 40.0
+    max_value: 48.0
+    step: 0.1
+    initial_value: 42.0
+    set_action:
+      - lambda: |-
+          char cmd[16];
+          snprintf(cmd, sizeof(cmd), "PSDV%.1f", x);
+          id(pi30_exchange).execute(std::string(cmd));
+      - script.wait:
+          id: pi30_exchange
+      - delay: 300ms
+      - script.execute:
+          id: pi30_exchange
+          command: "QPIRI"
+      - script.wait:
+          id: pi30_exchange
+
+
+# =========================================================
+# BUTTONS
+# =========================================================
+
+button:
+
+  - platform: template
+    name: "Request Slow Poll"
+    icon: "mdi:database-refresh"
+    on_press:
+      - if:
+          condition:
+            lambda: |-
+              return id(slow_poll_active) ||
+                     id(uart_busy) ||
+                     id(pi30_running);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "Request Slow Poll ignored: PI30 is busy");
+          else:
+            - script.execute: slow_poll
+
+
+# =========================================================
+# SELECT (селекторы настроек)
+# =========================================================
+
+select:
+
+  # Output Source Priority (Программа 01)
+  - platform: template
+    name: "Output Source Priority"
+    id: output_source_priority_select
+    icon: "mdi:source-branch"
+    options:
+      - "Utility First"
+      - "Solar First"
+      - "SBU Priority"
+    lambda: |-
+      return {id(output_source_priority_text)};
+    set_action:
+      - if:
+          condition:
+            lambda: |-
+              return id(slow_poll_active);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "Output Source Priority: slow poll active, ignoring");
+                id(output_source_priority_select).publish_state(id(output_source_priority_text));
+          else:
+            - wait_until:
+                condition:
+                  lambda: |-
+                    return !id(uart_busy) && !id(pi30_running);
+                timeout: 3s
+            - lambda: |-
+                std::string cmd;
+                if (x == "Utility First") cmd = "POP00";
+                else if (x == "Solar First") cmd = "POP01";
+                else if (x == "SBU Priority") cmd = "POP02";
+                if (!cmd.empty()) id(pi30_exchange).execute(cmd);
+            - script.wait:
+                id: pi30_exchange
+            - delay: 300ms
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIRI"
+            - script.wait:
+                id: pi30_exchange
+
+  # Input Voltage Range (Программа 03)
+  - platform: template
+    name: "Input Voltage Range"
+    id: input_voltage_range_select
+    icon: "mdi:power-plug"
+    options:
+      - "Appliance"
+      - "UPS"
+    lambda: |-
+      return {id(input_voltage_range_text)};
+    set_action:
+      - if:
+          condition:
+            lambda: |-
+              return id(slow_poll_active);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "Input Voltage Range: slow poll active, ignoring");
+                id(input_voltage_range_select).publish_state(id(input_voltage_range_text));
+          else:
+            - wait_until:
+                condition:
+                  lambda: |-
+                    return !id(uart_busy) && !id(pi30_running);
+                timeout: 3s
+            - lambda: |-
+                std::string cmd;
+                if (x == "Appliance") cmd = "PGR00";
+                else if (x == "UPS") cmd = "PGR01";
+                if (!cmd.empty()) id(pi30_exchange).execute(cmd);
+            - script.wait:
+                id: pi30_exchange
+            - delay: 300ms
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIRI"
+            - script.wait:
+                id: pi30_exchange
+
+  # Max Charging Current (Программа 02)
+  - platform: template
+    name: "Max Charging Current"
+    id: max_charging_current_select
+    icon: "mdi:current-dc"
+    options:
+      - "10 A"
+      - "20 A"
+      - "30 A"
+      - "40 A"
+      - "50 A"
+      - "60 A"
+      - "70 A"
+      - "80 A"
+      - "90 A"
+      - "100 A"
+      - "110 A"
+      - "120 A"
+    lambda: |-
+      return {id(max_charging_current_text)};
+    set_action:
+      - if:
+          condition:
+            lambda: |-
+              return id(slow_poll_active);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "Max Charging Current: slow poll active, ignoring");
+                id(max_charging_current_select).publish_state(id(max_charging_current_text));
+          else:
+            - wait_until:
+                condition:
+                  lambda: |-
+                    return !id(uart_busy) && !id(pi30_running);
+                timeout: 3s
+            - lambda: |-
+                std::string cmd;
+                int amps = 0;
+                if (x == "10 A") amps = 10;
+                else if (x == "20 A") amps = 20;
+                else if (x == "30 A") amps = 30;
+                else if (x == "40 A") amps = 40;
+                else if (x == "50 A") amps = 50;
+                else if (x == "60 A") amps = 60;
+                else if (x == "70 A") amps = 70;
+                else if (x == "80 A") amps = 80;
+                else if (x == "90 A") amps = 90;
+                else if (x == "100 A") amps = 100;
+                else if (x == "110 A") amps = 110;
+                else if (x == "120 A") amps = 120;
+                if (amps > 0) {
+                  char buf[16];
+                  snprintf(buf, sizeof(buf), "MNCHGC%03d", amps);
+                  cmd = std::string(buf);
+                }
+                if (!cmd.empty()) id(pi30_exchange).execute(cmd);
+            - script.wait:
+                id: pi30_exchange
+            - delay: 300ms
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIRI"
+            - script.wait:
+                id: pi30_exchange
+
+  # Charger Source Priority (Программа 16)
+  - platform: template
+    name: "Charger Source Priority"
+    id: charger_source_priority_select
+    icon: "mdi:battery-charging"
+    options:
+      - "Solar First"
+      - "Solar + Utility"
+      - "Only Solar"
+    lambda: |-
+      return {id(charger_source_priority_text)};
+    set_action:
+      - if:
+          condition:
+            lambda: |-
+              return id(slow_poll_active);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "Charger Source Priority: slow poll active, ignoring");
+                id(charger_source_priority_select).publish_state(id(charger_source_priority_text));
+          else:
+            - wait_until:
+                condition:
+                  lambda: |-
+                    return !id(uart_busy) && !id(pi30_running);
+                timeout: 3s
+            - lambda: |-
+                std::string cmd;
+                if (x == "Solar First") cmd = "PCP03";
+                else if (x == "Solar + Utility") cmd = "PCP01";
+                else if (x == "Only Solar") cmd = "PCP02";
+                if (!cmd.empty()) id(pi30_exchange).execute(cmd);
+            - script.wait:
+                id: pi30_exchange
+            - delay: 300ms
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIRI"
+            - script.wait:
+                id: pi30_exchange
+
+
+# =========================================================
+# SENSORS
+# =========================================================
+
+sensor:
+
+  - platform: template
+    id: grid_voltage
+    name: "Grid Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: grid_frequency
+    name: "Grid Frequency"
+    unit_of_measurement: "Hz"
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: ac_output_voltage
+    name: "AC Output Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: ac_output_frequency
+    name: "AC Output Frequency"
+    unit_of_measurement: "Hz"
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: ac_output_apparent_power
+    name: "AC Output Apparent Power"
+    unit_of_measurement: "VA"
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: template
+    id: ac_output_active_power
+    name: "AC Output Active Power"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: template
+    id: output_load_percent
+    name: "Output Load"
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: template
+    id: bus_voltage
+    name: "BUS Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: template
+    id: battery_voltage
+    name: "Battery Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+
+  - platform: template
+    id: battery_charging_current
+    name: "Battery Charging Current"
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: battery_capacity
+    name: "Battery Capacity"
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: template
+    id: battery_voltage_scc
+    name: "Battery Voltage SCC"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+
+  - platform: template
+    id: battery_discharge_current
+    name: "Battery Discharge Current"
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+
+  # === Температуры из Q1 ===
+
+  - platform: template
+    id: inverter_ntc_temperature
+    name: "Inverter NTC Temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+
+  - platform: template
+    id: pv_ntc_temperature
+    name: "PV NTC Temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 0
+
+  # === PV ===
+
+  - platform: template
+    id: pv_input_current
+    name: "PV Input Current"
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: pv_input_voltage
+    name: "PV Input Voltage"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: pv_charging_power
+    name: "PV Charging Power"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+
+
+# =========================================================
+# TEXT SENSORS
+# =========================================================
+
+text_sensor:
+
+  - platform: template
+    id: inverter_status_bits
+    name: "Inverter Status Bits"
+    internal: true
+
+  - platform: template
+    name: "Inverter Mode"
+    id: inverter_mode
+    icon: "mdi:state-machine"
+    entity_category: "diagnostic"
+    lambda: |-
+      return {id(inverter_mode_text)};
+
+  - platform: template
+    name: "Battery Type"
+    id: battery_type_sensor
+    icon: "mdi:battery-sync"
+    entity_category: "diagnostic"
+    lambda: |-
+      return {id(battery_type_text)};
+
+  - platform: template
+    name: "Inverter Fault Status"
+    id: inverter_fault_status
+    icon: "mdi:alert-circle-outline"
+    entity_category: "diagnostic"
+    update_interval: never
+    lambda: |-
+      return {id(inverter_fault_text)};
+
+  - platform: template
+    name: "Firmware Version"
+    id: firmware_version
+    icon: "mdi:chip"
+    entity_category: "diagnostic"
+    update_interval: never
+    lambda: |-
+      return {id(firmware_version_text)};
+
+
+# =========================================================
+# SCRIPTS
+# =========================================================
+
+script:
+
+  - id: pi30_exchange
+    mode: single
+
+    parameters:
+      command: string
+
+    then:
+
+      - lambda: |-
+          id(pi30_running) = true;
+
+      - wait_until:
+          condition:
+            lambda: |-
+              return !id(uart_busy);
+          timeout: 10s
+
+      - if:
+          condition:
+            lambda: |-
+              return id(uart_busy);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "PI30 %s: UART timeout/busy", command.c_str());
+                id(pi30_last_ok) = false;
+                id(pi30_running) = false;
+          else:
+
+            - lambda: |-
+                id(uart_busy) = true;
+
+            - lambda: |-
+                while (id(inverter_uart).available()) {
+                  uint8_t dump;
+                  if (!id(inverter_uart).read_byte(&dump)) {
+                    break;
+                  }
+                }
+
+            - lambda: |-
+                uint16_t crc = 0;
+
+                for (size_t i = 0; i < command.length(); i++) {
+                  crc ^= ((uint16_t)(uint8_t)command[i]) << 8;
+                  for (int j = 0; j < 8; j++) {
+                    if (crc & 0x8000) {
+                      crc = (crc << 1) ^ 0x1021;
+                    } else {
+                      crc <<= 1;
+                    }
+                  }
+                }
+
+                for (size_t i = 0; i < command.length(); i++) {
+                  id(inverter_uart).write_byte((uint8_t)command[i]);
+                }
+
+                id(inverter_uart).write_byte((uint8_t)(crc >> 8));
+                id(inverter_uart).write_byte((uint8_t)(crc & 0xFF));
+                id(inverter_uart).write_byte(0x0D);
+                id(inverter_uart).flush();
+
+                ESP_LOGD("INVERTER", "PI30 TX: %s CRC=%04X", command.c_str(), crc);
+
+            - wait_until:
+                condition:
+                  lambda: |-
+                    return id(inverter_uart).available() > 0;
+                timeout: 1s
+
+            - if:
+                condition:
+                  lambda: |-
+                    return id(inverter_uart).available() > 0;
+                then:
+
+                  - lambda: |-
+                      // Ждём, пока наберётся хотя бы 5 байт или пройдёт 20 мс
+                      uint32_t wait_start = millis();
+                      while (millis() - wait_start < 20 && id(inverter_uart).available() < 5) {
+                        delay(2);
+                      }
+
+                  - lambda: |-
+                      uint8_t rx[320];
+                      size_t rx_len = 0;
+
+                      // Читаем, пока линия не замолчит на 15 мс
+                      uint32_t last_byte_ms = millis();
+
+                      while (rx_len < sizeof(rx)) {
+                        if (id(inverter_uart).available()) {
+                          uint8_t b;
+                          if (id(inverter_uart).read_byte(&b)) {
+                            rx[rx_len++] = b;
+                            last_byte_ms = millis();
+                          }
+                        } else {
+                          if (millis() - last_byte_ms > 15) {
+                            break;
+                          }
+                          delay(1);
+                        }
+                      }
+
+                      ESP_LOGD("INVERTER", "PI30 RX bytes: %u", (unsigned)rx_len);
+
+                      if (rx_len < 5) {
+                        ESP_LOGW("INVERTER", "PI30 %s: response too short", command.c_str());
+                        id(pi30_last_ok) = false;
+                        id(uart_busy) = false;
+                        id(pi30_running) = false;
+                        return;
+                      }
+
+                      int start = -1;
+                      for (size_t i = 0; i < rx_len; i++) {
+                        if (rx[i] == '(') {
+                          start = (int)i;
+                          break;
+                        }
+                      }
+
+                      if (start < 0) {
+                        ESP_LOGW("INVERTER", "PI30 %s: '(' not found", command.c_str());
+                        id(pi30_last_ok) = false;
+                        id(uart_busy) = false;
+                        id(pi30_running) = false;
+                        return;
+                      }
+
+                      int cr_pos = -1;
+                      for (int i = (int)rx_len - 1; i >= start; i--) {
+                        if (rx[i] == 0x0D) {
+                          cr_pos = i;
+                          break;
+                        }
+                      }
+
+                      if (cr_pos < 0) {
+                        ESP_LOGW("INVERTER", "PI30 %s: CR not found", command.c_str());
+                        id(pi30_last_ok) = false;
+                        id(uart_busy) = false;
+                        id(pi30_running) = false;
+                        return;
+                      }
+
+                      if (cr_pos - start < 3) {
+                        ESP_LOGW("INVERTER", "PI30 %s: invalid frame", command.c_str());
+                        id(pi30_last_ok) = false;
+                        id(uart_busy) = false;
+                        id(pi30_running) = false;
+                        return;
+                      }
+
+                      uint16_t received_crc =
+                        (((uint16_t)rx[cr_pos - 2]) << 8) | rx[cr_pos - 1];
+
+                      uint16_t calculated_crc = 0;
+                      for (int i = start; i < cr_pos - 2; i++) {
+                        calculated_crc ^= ((uint16_t)rx[i]) << 8;
+                        for (int j = 0; j < 8; j++) {
+                          if (calculated_crc & 0x8000) {
+                            calculated_crc = (calculated_crc << 1) ^ 0x1021;
+                          } else {
+                            calculated_crc <<= 1;
+                          }
+                        }
+                      }
+
+                      if (received_crc != calculated_crc) {
+                        ESP_LOGW("INVERTER",
+                          "PI30 %s: CRC ERROR RX=%04X CALC=%04X",
+                          command.c_str(), received_crc, calculated_crc);
+                        id(pi30_last_ok) = false;
+                        id(uart_busy) = false;
+                        id(pi30_running) = false;
+                        return;
+                      }
+
+                      ESP_LOGD("INVERTER", "PI30 %s: CRC OK %04X", command.c_str(), received_crc);
+
+                      id(pi30_last_ok) = true;
+
+                      int body_len = cr_pos - start - 3;
+                      if (body_len < 1) {
+                        ESP_LOGW("INVERTER", "PI30 %s: empty body", command.c_str());
+                        id(pi30_last_ok) = false;
+                        id(uart_busy) = false;
+                        id(pi30_running) = false;
+                        return;
+                      }
+
+                      char body[300];
+                      if (body_len >= (int)sizeof(body)) {
+                        body_len = sizeof(body) - 1;
+                      }
+
+                      memcpy(body, &rx[start + 1], body_len);
+                      body[body_len] = '\0';
+
+                      // QPIGS
+                      if (command == "QPIGS") {
+                        ESP_LOGI("INVERTER", "QPIGS raw: %s", body);
+
+                        char *fields[20];
+                        int field_count = 0;
+
+                        char *token = strtok(body, " \r\n)");
+                        while (token != nullptr && field_count < 20) {
+                          fields[field_count++] = token;
+                          token = strtok(nullptr, " \r\n)");
+                        }
+
+                        if (field_count < 20) {
+                          ESP_LOGW("INVERTER", "QPIGS: only %d fields", field_count);
+                          id(pi30_last_ok) = false;
+                          id(uart_busy) = false;
+                          id(pi30_running) = false;
+                          return;
+                        }
+
+                        id(grid_voltage).publish_state(atof(fields[0]));
+                        id(grid_frequency).publish_state(atof(fields[1]));
+                        id(ac_output_voltage).publish_state(atof(fields[2]));
+                        id(ac_output_frequency).publish_state(atof(fields[3]));
+                        id(ac_output_apparent_power).publish_state(atof(fields[4]));
+                        id(ac_output_active_power).publish_state(atof(fields[5]));
+                        id(output_load_percent).publish_state(atof(fields[6]));
+                        id(bus_voltage).publish_state(atof(fields[7]));
+                        id(battery_voltage).publish_state(atof(fields[8]));
+                        id(battery_charging_current).publish_state(atof(fields[9]));
+                        id(battery_capacity).publish_state(atof(fields[10]));
+                        id(pv_input_current).publish_state(atof(fields[12]));
+                        id(pv_input_voltage).publish_state(atof(fields[13]));
+                        id(battery_voltage_scc).publish_state(atof(fields[14]));
+                        id(battery_discharge_current).publish_state(atof(fields[15]));
+                        id(inverter_status_bits).publish_state(fields[16]);
+                        id(pv_charging_power).publish_state(atof(fields[19]));
+
+                        ESP_LOGI("INVERTER",
+                          "GRID %.1fV %.1fHz | OUT %.1fV %.1fHz | LOAD %.0f%% | POWER %.0fW",
+                          atof(fields[0]), atof(fields[1]),
+                          atof(fields[2]), atof(fields[3]),
+                          atof(fields[6]), atof(fields[5]));
+                      }
+
+                      // QPIRI
+                      else if (command == "QPIRI") {
+                        ESP_LOGI("INVERTER", "QPIRI raw: %s", body);
+
+                        char *fields[30];
+                        int field_count = 0;
+
+                        char *token = strtok(body, " \r\n)");
+                        while (token != nullptr && field_count < 30) {
+                          fields[field_count++] = token;
+                          token = strtok(nullptr, " \r\n)");
+                        }
+
+                        if (field_count < 17) {
+                          ESP_LOGW("INVERTER", "QPIRI: only %d fields", field_count);
+                          id(pi30_last_ok) = false;
+                        } else {
+                          int priority = atoi(fields[16]);
+                          std::string priority_text;
+                          switch (priority) {
+                            case 0: priority_text = "Utility First"; break;
+                            case 1: priority_text = "Solar First"; break;
+                            case 2: priority_text = "SBU Priority"; break;
+                            default: priority_text = "Utility First"; break;
+                          }
+                          id(output_source_priority_text) = priority_text;
+
+                          if (field_count > 12) {
+                            int bt = atoi(fields[12]);
+                            std::string bt_text;
+                            switch (bt) {
+                              case 0: bt_text = "AGM"; break;
+                              case 1: bt_text = "Flooded"; break;
+                              case 2: bt_text = "User"; break;
+                              case 3: bt_text = "LIP"; break;
+                              case 4: bt_text = "LIL"; break;
+                              case 5: bt_text = "LIB"; break;
+                              default: bt_text = "Unknown"; break;
+                            }
+                            id(battery_type_text) = bt_text;
+                            id(battery_type_sensor).publish_state(bt_text);
+                          }
+
+                          if (field_count > 14) {
+                            int mc = atoi(fields[14]);
+                            char mc_text[16];
+                            snprintf(mc_text, sizeof(mc_text), "%d A", mc);
+                            id(max_charging_current_text) = std::string(mc_text);
+                          }
+
+                          if (field_count > 15) {
+                            int vr = atoi(fields[15]);
+                            std::string vr_text;
+                            switch (vr) {
+                              case 0: vr_text = "Appliance"; break;
+                              case 1: vr_text = "UPS"; break;
+                              default: vr_text = "UPS"; break;
+                            }
+                            id(input_voltage_range_text) = vr_text;
+                          }
+
+                          if (field_count > 17) {
+                            int cp = atoi(fields[17]);
+                            std::string cp_text;
+                            switch (cp) {
+                              case 0: cp_text = "Solar + Utility"; break;
+                              case 1: cp_text = "Solar + Utility"; break;
+                              case 2: cp_text = "Only Solar"; break;
+                              case 3: cp_text = "Solar First"; break;
+                              default: cp_text = "Solar + Utility"; break;
+                            }
+                            id(charger_source_priority_text) = cp_text;
+                          }
+
+                          // === Напряжения батареи из QPIRI ===
+                          if (field_count > 8) {
+                            id(battery_recharge_voltage).publish_state(atof(fields[8]));
+                          }
+                          if (field_count > 9) {
+                            id(battery_cutoff_voltage).publish_state(atof(fields[9]));
+                          }
+                          if (field_count > 10) {
+                            id(battery_cv_voltage).publish_state(atof(fields[10]));
+                          }
+                          if (field_count > 22) {
+                            id(battery_redischarge_voltage).publish_state(atof(fields[22]));
+                          }
+
+                          ESP_LOGI("INVERTER",
+                            "QPIRI: out=%s, batt=%s, maxchg=%s, range=%s, charger=%s",
+                            id(output_source_priority_text).c_str(),
+                            id(battery_type_text).c_str(),
+                            id(max_charging_current_text).c_str(),
+                            id(input_voltage_range_text).c_str(),
+                            id(charger_source_priority_text).c_str());
+
+                          id(output_source_priority_select).publish_state(id(output_source_priority_text));
+                          id(input_voltage_range_select).publish_state(id(input_voltage_range_text));
+                          id(max_charging_current_select).publish_state(id(max_charging_current_text));
+                          id(charger_source_priority_select).publish_state(id(charger_source_priority_text));
+                        }
+                      }
+
+                      // QMOD
+                      else if (command == "QMOD") {
+                        if (body_len >= 1) {
+                          char mode_char = body[0];
+                          std::string mode_text;
+                          switch (mode_char) {
+                            case 'P': mode_text = "Power On"; break;
+                            case 'S': mode_text = "Standby"; break;
+                            case 'L': mode_text = "Line Mode"; break;
+                            case 'B': mode_text = "Battery Mode"; break;
+                            case 'F': mode_text = "Fault Mode"; break;
+                            case 'H': mode_text = "Power Saving"; break;
+                            default: mode_text = "Unknown"; break;
+                          }
+                          id(inverter_mode_text) = mode_text;
+                          id(inverter_mode).publish_state(mode_text);
+                          ESP_LOGI("INVERTER", "QMOD: %s (raw '%c')", mode_text.c_str(), mode_char);
+                        }
+                      }
+
+                      // Q1 (только температуры)
+                      else if (command == "Q1") {
+                        char *fields[40];
+                        int field_count = 0;
+
+                        char *token = strtok(body, " \r\n)");
+                        while (token != nullptr && field_count < 40) {
+                          fields[field_count++] = token;
+                          token = strtok(nullptr, " \r\n)");
+                        }
+
+                        if (field_count >= 7) {
+                          id(inverter_ntc_temperature).publish_state(atof(fields[4]));
+                          id(pv_ntc_temperature).publish_state(atof(fields[6]));
+
+                          ESP_LOGI("INVERTER",
+                            "Q1: inverter_NTC=%.0f°C, PV_NTC=%.0f°C",
+                            atof(fields[4]),
+                            atof(fields[6]));
+                        } else {
+                          ESP_LOGW("INVERTER", "Q1: only %d fields", field_count);
+                        }
+                      }
+
+                      // QPIWS
+                      else if (command == "QPIWS") {
+                        ESP_LOGI("INVERTER", "QPIWS raw: [%s]", body);
+
+                        std::string bits;
+                        for (int i = 0; i < body_len; i++) {
+                          if (body[i] == '0' || body[i] == '1') {
+                            bits += body[i];
+                          }
+                        }
+
+                        ESP_LOGI("INVERTER", "QPIWS bits: %s (len=%d)", bits.c_str(), (int)bits.length());
+
+                        if (bits.length() < 26) {
+                          ESP_LOGW("INVERTER", "QPIWS: only %d bits", (int)bits.length());
+                          id(inverter_fault_text) = "Unknown";
+                          id(inverter_fault_status).publish_state("Unknown");
+                        } else {
+                          const char* fault_names[] = {
+                            "Inverter Fault",
+                            "Bus Over",
+                            "Bus Under",
+                            "Bus Soft Fail",
+                            "Line Fail",
+                            "Output Short Circuit",
+                            "Inverter Voltage Too Low",
+                            "Inverter Voltage Too High",
+                            "Over Temperature",
+                            "Fan Locked",
+                            "Battery Voltage High",
+                            "Battery Low Alarm",
+                            "Battery Under Shutdown",
+                            "Over Load",
+                            "EEPROM Fault",
+                            "Inverter Soft Fail",
+                            "Self Test Fail",
+                            "OP DC Voltage Over",
+                            "Battery Open",
+                            "Current Sensor Fail",
+                            "Battery Short",
+                            "Power Limit",
+                            "PV Voltage High",
+                            "MPPT Overload Fault",
+                            "MPPT Overload Warning",
+                            "Battery Too Low To Charge"
+                          };
+
+                          float pv_v = id(pv_input_voltage).state;
+                          float batt_v = id(battery_voltage).state;
+                          bool pv_absent = isnan(pv_v) || pv_v < 5.0f;
+                          bool batt_absent = isnan(batt_v) || batt_v < 20.0f;
+
+                          std::string result;
+                          for (int i = 0; i < 26 && i < (int)bits.length(); i++) {
+                            if (bits[i] != '1') continue;
+
+                            // Ложные биты при отключённых PV/батарее
+                            if (pv_absent && i == 22) continue;   // PV Voltage High
+                            if (batt_absent && i == 0) continue;  // Inverter Fault
+
+                            if (!result.empty()) result += " | ";
+                            result += fault_names[i];
+                          }
+
+                          if (result.empty()) {
+                            result = "OK";
+                          }
+
+                          id(inverter_fault_text) = result;
+                          id(inverter_fault_status).publish_state(result);
+                          ESP_LOGI("INVERTER", "QPIWS: %s", result.c_str());
+                        }
+                      }
+
+                      // QVFW
+                      else if (command == "QVFW") {
+                        ESP_LOGI("INVERTER", "QVFW raw: [%s]", body);
+
+                        if (strncmp(body, "VERFW:", 6) == 0) {
+                          std::string version = std::string(body + 6);
+                          id(firmware_version_text) = version;
+                          id(firmware_version).publish_state(version);
+                          ESP_LOGI("INVERTER", "Firmware version: %s", version.c_str());
+                        } else {
+                          ESP_LOGW("INVERTER", "QVFW: unexpected format: %s", body);
+                          id(firmware_version_text) = "Unknown";
+                          id(firmware_version).publish_state("Unknown");
+                        }
+                      }
+
+                      // =================================================
+                      // КОМАНДЫ УСТАНОВКИ (ACK/NAK)
+                      // =================================================
+
+                      else if (command.rfind("POP", 0) == 0 ||
+                               command.rfind("PBT", 0) == 0 ||
+                               command.rfind("PGR", 0) == 0 ||
+                               command.rfind("MNCHGC", 0) == 0 ||
+                               command.rfind("PCP", 0) == 0 ||
+                               command.rfind("PBCV", 0) == 0 ||
+                               command.rfind("PBDV", 0) == 0 ||
+                               command.rfind("PCVV", 0) == 0 ||
+                               command.rfind("PSDV", 0) == 0) {
+
+                        if (strncmp(body, "ACK", 3) == 0) {
+                          ESP_LOGI("INVERTER", "PI30 %s: ACK (command accepted)", command.c_str());
+                        } else if (strncmp(body, "NAK", 3) == 0) {
+                          ESP_LOGW("INVERTER", "PI30 %s: NAK (command rejected)", command.c_str());
+                          id(pi30_last_ok) = false;
+                        } else {
+                          ESP_LOGI("INVERTER", "PI30 %s: OK (body='%s')", command.c_str(), body);
+                        }
+                      }
+
+                      else {
+                        ESP_LOGW("INVERTER", "PI30: unknown command parser: %s", command.c_str());
+                      }
+
+                      id(uart_busy) = false;
+                      id(pi30_running) = false;
+
+                else:
+
+                  - lambda: |-
+                      ESP_LOGW("INVERTER", "PI30 %s: response timeout", command.c_str());
+                      id(pi30_last_ok) = false;
+                      id(uart_busy) = false;
+                      id(pi30_running) = false;
+
+
+  - id: fast_poll
+    mode: single
+
+    then:
+
+      - if:
+          condition:
+            lambda: |-
+              return id(uart_busy) || id(slow_poll_active) || id(pi30_running);
+          then:
+            - lambda: |-
+                ESP_LOGD("INVERTER", "FAST POLL: skipped, PI30 busy");
+          else:
+
+            - lambda: |-
+                id(last_fast_poll_ms) = millis();
+
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIGS"
+            - script.wait:
+                id: pi30_exchange
+
+            - if:
+                condition:
+                  lambda: |-
+                    return !id(pi30_last_ok);
+                then:
+                  - lambda: |-
+                      ESP_LOGW("INVERTER", "QPIGS: retry after error");
+                  - delay: 500ms
+                  - script.execute:
+                      id: pi30_exchange
+                      command: "QPIGS"
+                  - script.wait:
+                      id: pi30_exchange
+
+            - script.execute:
+                id: pi30_exchange
+                command: "Q1"
+            - script.wait:
+                id: pi30_exchange
+
+
+  - id: slow_poll
+    mode: single
+
+    then:
+
+      - wait_until:
+          condition:
+            lambda: |-
+              return !id(uart_busy) && !id(slow_poll_active) && !id(pi30_running);
+          timeout: 10s
+
+      - if:
+          condition:
+            lambda: |-
+              return id(uart_busy) || id(slow_poll_active) || id(pi30_running);
+          then:
+            - lambda: |-
+                ESP_LOGW("INVERTER", "SLOW POLL aborted: PI30 busy timeout");
+                id(startup_slow_poll_done) = true;
+                id(last_slow_poll_ms) = millis();
+                id(last_fast_poll_ms) = millis();
+          else:
+
+            - lambda: |-
+                id(slow_poll_active) = true;
+                ESP_LOGI("INVERTER", "==========================================");
+                ESP_LOGI("INVERTER", "SLOW POLL START");
+
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIRI"
+            - script.wait:
+                id: pi30_exchange
+
+            - if:
+                condition:
+                  lambda: |-
+                    return id(pi30_last_ok);
+                then:
+                  - lambda: |-
+                      ESP_LOGI("INVERTER", "QPIRI: settings updated");
+                else:
+                  - lambda: |-
+                      ESP_LOGW("INVERTER", "QPIRI: failed");
+
+            - script.execute:
+                id: pi30_exchange
+                command: "QMOD"
+            - script.wait:
+                id: pi30_exchange
+
+            - script.execute:
+                id: pi30_exchange
+                command: "QPIWS"
+            - script.wait:
+                id: pi30_exchange
+
+            - lambda: |-
+                id(slow_poll_active) = false;
+                id(startup_slow_poll_done) = true;
+                id(last_slow_poll_ms) = millis();
+
+                ESP_LOGI("INVERTER", "SLOW POLL END");
+                ESP_LOGI("INVERTER", "STARTUP SLOW POLL DONE");
+                ESP_LOGI("INVERTER", "==========================================");
+
+
+# =========================================================
+# SCHEDULER
+# =========================================================
+
+interval:
+
+  - interval: 200ms
+
+    then:
+
+      - lambda: |-
+
+          if (!id(startup_slow_poll_done)) {
+            return;
+          }
+
+          if (id(slow_poll_active)) {
+            return;
+          }
+
+          if (id(uart_busy) || id(pi30_running)) {
+            return;
+          }
+
+          uint32_t now = millis();
+
+          uint32_t slow_interval_ms =
+            ((uint32_t)(id(slow_poll_interval_min).state)) * 60000UL;
+
+          if (slow_interval_ms < 60000UL) {
+            slow_interval_ms = 60000UL;
+          }
+
+          if ((uint32_t)(now - id(last_slow_poll_ms)) >= slow_interval_ms) {
+            id(slow_poll).execute();
+            return;
+          }
+
+          uint32_t fast_interval_ms =
+            ((uint32_t)(id(fast_poll_interval_sec).state)) * 1000UL;
+
+          if (fast_interval_ms < 1000UL) {
+            fast_interval_ms = 1000UL;
+          }
+
+          if ((uint32_t)(now - id(last_fast_poll_ms)) >= fast_interval_ms) {
+            id(fast_poll).execute();
+          }
