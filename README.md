@@ -147,7 +147,7 @@ Home Assistant не умеет перемножать сенсоры напря�
 
 | Поле | Значение |
 |---|---|
-| Название | `Yingfa Inverter AC Energy` |
+| Название | `AC Energy` |
 | Входной сенсор | `sensor.yingfa_invertor_ac_output_active_power` |
 
 ---
@@ -156,7 +156,7 @@ Home Assistant не умеет перемножать сенсоры напря�
 
 | Поле | Значение |
 |---|---|
-| Название | `Yingfa Inverter PV Energy` |
+| Название | `PV Energy` |
 | Входной сенсор | `sensor.yingfa_invertor_pv_charging_power` |
 
 ---
