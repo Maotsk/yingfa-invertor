@@ -66,7 +66,8 @@ ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
 1. Клонировать репозиторий.
 2. Скопировать `secrets.yaml.example` → `secrets.yaml`, заполнить:
    - `wifi_ssid`, `wifi_password`
-   - `api_encryption_key` (свой, не из примера!)
+   - `yingfa_api_key` (свой, не из примера!)
+   - `yingfa_ap_password` (свой, не из примера!)
 3. Проверить `device_ip` в `substitutions` — должен совпадать с IP ESP.
 4. Скомпилировать и залить:
    ```bash
