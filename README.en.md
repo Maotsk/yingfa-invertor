@@ -53,7 +53,7 @@ Polling intervals are configurable in Home Assistant
 
 ## Home Assistant Energy Dashboard Integration
 
-Energy (kWh) calculation and battery power sensors are created on the
+Energy (kWh) calculation and power sensors are created on the
 **Home Assistant** side, not on the ESP. This is a deliberate choice:
 integration on the ESP8266 adds extra load and additional flash memory
 writes, reducing the device's lifespan.
@@ -72,8 +72,8 @@ Setting up the Energy Dashboard consists of three steps:
 
 | Sensor | What it measures |
 |---|---|
-| `sensor.yingfa_invertor_ac_output_active_power` | Inverter output power |
-| `sensor.yingfa_invertor_pv_charging_power` | Solar panel power |
+| `sensor.yingfa_invertor_ac_output_active_power` | AC Output Power — inverter output to load |
+| `sensor.yingfa_invertor_pv_charging_power` | PV Power — solar panel generation |
 
 Verify in **Developer Tools → States** that they have:
 - `device_class: power`
@@ -81,7 +81,7 @@ Verify in **Developer Tools → States** that they have:
 
 These attributes are already set in the ESPHome config.
 
-#### Create in HA via the "Template" helper
+#### Battery Power — via the "Template" helper
 
 Home Assistant cannot multiply sensors directly, so battery power
 (charge and discharge) is computed with a template.
@@ -125,13 +125,51 @@ Formula: **voltage × current**.
 {{ (voltage * current) | round(1) }}
 ```
 
+#### Grid Import Power — computed, for Energy Dashboard
+
+PI30 **does not provide** a separate sensor for grid input power.
+Fields 0 and 1 in QPIGS are grid voltage and frequency — there is no
+grid current. So grid power is computed from the power balance:
+
+`Grid Import = AC Output − PV + Battery Charge − Battery Discharge`
+
+**Creation via the "Template" helper:**
+
+| Field | Value |
+|---|---|
+| Name | `Grid Import Power` |
+| State template | see code below |
+| Unit of measurement | `W` |
+| Device class | `power` |
+| State class | `measurement` |
+
+```jinja
+{% set ac_out = states('sensor.yingfa_invertor_ac_output_active_power') | float(0) %}
+{% set pv = states('sensor.yingfa_invertor_pv_charging_power') | float(0) %}
+{% set batt_chg = states('sensor.battery_charge_power') | float(0) %}
+{% set batt_dis = states('sensor.battery_discharge_power') | float(0) %}
+{% set grid = ac_out - pv + batt_chg - batt_dis %}
+{{ [grid, 0] | max | round(1) }}
+```
+
+> The last line `[grid, 0] | max` clamps negative values to zero.
+> This is needed because when PV fully covers the load, the formula
+> may produce a negative result due to rounding error.
+> Energy Dashboard does not accept negative values in import sensors.
+
+> **Important:** this is an approximate calculation. PI30 does not
+> provide the real grid current, so the formula relies on the power
+> balance. Errors may accumulate, especially if the inverter efficiency
+> is not 100%. But this is a standard trade-off for Voltronic-compatible
+> inverters.
+
 > If the source entity IDs differ (e.g. `sensor.battery_voltage` instead
 > of `sensor.yingfa_invertor_battery_voltage`), adjust the template.
 > Exact names are visible in **Developer Tools → States**.
 
 ### Step 2. Energy sensors (kWh)
 
-All four energy sensors are created the same way — via the **Integral**
+All energy sensors are created the same way — via the **Integral**
 helper (Riemann sum integral). It takes instantaneous power in watts
 and accumulates it into kilowatt-hours.
 
@@ -142,7 +180,7 @@ and accumulates it into kilowatt-hours.
 3. Fill in the fields per one of the tables below.
 
 The fields **Integration method**, **Unit prefix** and **Time unit** are
-the same for all four sensors:
+the same for all sensors:
 
 | Field | Value |
 |---|---|
@@ -157,7 +195,7 @@ the same for all four sensors:
 
 ---
 
-**1. AC Energy — inverter consumption**
+**1. AC Output Energy — inverter output**
 
 | Field | Value |
 |---|---|
@@ -191,16 +229,28 @@ the same for all four sensors:
 | Name | `Battery Discharge Energy` |
 | Input sensor | `sensor.battery_discharge_power` |
 
+---
+
+**5. Grid Import Energy — consumption from grid**
+
+| Field | Value |
+|---|---|
+| Name | `Grid Import Energy` |
+| Input sensor | `sensor.grid_import_power` |
+
 ### Step 3. Adding to Energy Dashboard
 
 1. **Settings → Dashboards → Energy**
-2. Under **Individual devices**, add:
-   - `Yingfa Inverter AC Energy`
+2. Under **Grid**, add:
+   - `Grid Import Energy`
+3. Under **Solar Panels**, add:
    - `Yingfa Inverter PV Energy`
-3. Under **Battery**, add:
+4. Under **Battery**, add:
    - `Battery Charge Energy`
    - `Battery Discharge Energy`
-4. Save.
+5. Under **Individual devices**, add:
+   - `Yingfa Inverter AC Energy`
+6. Save.
 
 ### Important
 
@@ -211,6 +261,8 @@ the same for all four sensors:
 - Do not add `sensor.battery_voltage` or
   `sensor.battery_charging_current` to the Energy Dashboard directly —
   they are not in kWh and not `total_increasing`.
+- `Grid Import Energy` is a **computed** sensor, not a direct measurement.
+  Small deviations from real grid consumption are possible.
 
 ## Architecture
 
