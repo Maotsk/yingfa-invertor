@@ -122,23 +122,60 @@ Home Assistant не умеет перемножать сенсоры напря�
 
 ### Шаг 2. Сенсоры энергии (kWh)
 
-Все четыре сенсора энергии создаются одинаково — через помощник
-**Интегральный** (Riemann sum integral). Он берёт мгновенную мощность
-в ваттах и накапливает её в киловатт-часах.
+Все четыре сенсора создаются одинаково — через помощник **Интегральный**
+(Riemann sum integral). Он берёт мгновенную мощность в ваттах и накапливает
+её в киловатт-часах.
 
-**Создание:**
+**Общий порядок создания:**
 
 1. **Настройки → Устройства и службы → Помощники → + Создать помощника**
 2. Выбери **Интегральный** (в некоторых версиях — **Интеграл**)
-3. Заполни поля по таблице ниже — для каждого сенсора отдельно.
+3. Заполни поля по одной из таблиц ниже.
 
-| Поле | AC Energy | PV Energy | Battery Charge Energy | Battery Discharge Energy |
-|---|---|---|---|---|
-| **Название** | `Yingfa Inverter AC Energy` | `Yingfa Inverter PV Energy` | `Battery Charge Energy` | `Battery Discharge Energy` |
-| **Входной сенсор** | `sensor.yingfa_invertor_ac_output_active_power` | `sensor.yingfa_invertor_pv_charging_power` | `sensor.battery_charge_power` | `sensor.battery_discharge_power` |
-| **Метод интегрирования** | `Trapezoidal` | `Trapezoidal` | `Trapezoidal` | `Trapezoidal` |
-| **Префикс единицы** | `k` | `k` | `k` | `k` |
-| **Единица времени** | `h` | `h` | `h` | `h` |
+Поля **Метод интегрирования**, **Префикс единицы** и **Единица времени**
+одинаковые для всех четырёх сенсоров:
+
+| Поле | Значение |
+|---|---|
+| Метод интегрирования | `Trapezoidal` |
+| Префикс единицы | `k` |
+| Единица времени | `h` |
+
+---
+
+**1. AC Energy — потребление от инвертора**
+
+| Поле | Значение |
+|---|---|
+| Название | `Yingfa Inverter AC Energy` |
+| Входной сенсор | `sensor.yingfa_invertor_ac_output_active_power` |
+
+---
+
+**2. PV Energy — выработка солнечных панелей**
+
+| Поле | Значение |
+|---|---|
+| Название | `Yingfa Inverter PV Energy` |
+| Входной сенсор | `sensor.yingfa_invertor_pv_charging_power` |
+
+---
+
+**3. Battery Charge Energy — заряд батареи**
+
+| Поле | Значение |
+|---|---|
+| Название | `Battery Charge Energy` |
+| Входной сенсор | `sensor.battery_charge_power` |
+
+---
+
+**4. Battery Discharge Energy — разряд батареи**
+
+| Поле | Значение |
+|---|---|
+| Название | `Battery Discharge Energy` |
+| Входной сенсор | `sensor.battery_discharge_power` |
 
 ### Шаг 3. Добавление в Energy Dashboard
 
