@@ -1,7 +1,7 @@
 substitutions:
   name: yingfa-invertor
   device_description: "Yingfa 6.2kW PI30 inverter RS232"
-  device_ip: "192.168.68.219"
+  device_ip: "192.***.***.***"
 
 
 # =========================================================
