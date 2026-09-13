@@ -1,6 +1,7 @@
 substitutions:
   name: yingfa-invertor
   device_description: "Yingfa 6.2kW PI30 inverter RS232"
+
   device_ip: "192.***.***.***"
 
 
@@ -36,14 +37,6 @@ esphome:
             - lambda: |-
                 ESP_LOGW("INVERTER", "STARTUP: slow poll timeout, enabling fast poll");
                 id(startup_slow_poll_done) = true;
-
-      # QVFW — версия прошивки (один раз при запуске)
-      - script.execute:
-          id: pi30_exchange
-          command: "QVFW"
-      - script.wait:
-          id: pi30_exchange
-
 
 # =========================================================
 # ESP8266
@@ -391,6 +384,10 @@ button:
           else:
             - script.execute: slow_poll
 
+  - platform: restart
+    name: "Restart ESP"
+    icon: "mdi:restart"
+    entity_category: diagnostic
 
 # =========================================================
 # SELECT (селекторы настроек)
@@ -1411,6 +1408,50 @@ script:
                 command: "QPIWS"
             - script.wait:
                 id: pi30_exchange
+
+            # QVFW — версия прошивки (только если ещё не получена)
+            - if:
+                condition:
+                  lambda: |-
+                    return id(firmware_version_text) == "Unknown" ||
+                           id(firmware_version_text).empty();
+                then:
+                  - script.execute:
+                      id: pi30_exchange
+                      command: "QVFW"
+                  - script.wait:
+                      id: pi30_exchange
+
+                  # Один ретрай, если не получилось
+                  - if:
+                      condition:
+                        lambda: |-
+                          return id(firmware_version_text) == "Unknown" ||
+                                 id(firmware_version_text).empty();
+                      then:
+                        - lambda: |-
+                            ESP_LOGW("INVERTER", "QVFW: retry after failure");
+                        - delay: 500ms
+                        - script.execute:
+                            id: pi30_exchange
+                            command: "QVFW"
+                        - script.wait:
+                            id: pi30_exchange
+
+                  - if:
+                      condition:
+                        lambda: |-
+                          return id(firmware_version_text) != "Unknown" &&
+                                 !id(firmware_version_text).empty();
+                      then:
+                        - lambda: |-
+                            ESP_LOGI("INVERTER",
+                              "Firmware version: %s",
+                              id(firmware_version_text).c_str());
+                      else:
+                        - lambda: |-
+                            ESP_LOGW("INVERTER",
+                              "QVFW: not received, will retry on next slow poll");
 
             - lambda: |-
                 id(slow_poll_active) = false;
