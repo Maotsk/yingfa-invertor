@@ -248,7 +248,9 @@ Home Assistant не умеет перемножать сенсоры напря�
    - `wifi_ssid`, `wifi_password`
    - `yingfa_api_key` (свой, не из примера!)
    - `yingfa_ap_password` (свой, не из примера!)
-3. Проверить `device_ip` в `substitutions` — должен совпадать с IP ESP.
+3. Указать `device_ip` в `substitutions` — IP твоего ESP в локальной сети.
+   Если не знаешь — посмотри в роутере (DHCP leases) или в ESPHome Dashboard.
+   Без этого OTA и API-соединение работать не будут.
 4. Скомпилировать и залить:
 
    ```bash
