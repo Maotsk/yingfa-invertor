@@ -71,3 +71,65 @@ ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
 4. Скомпилировать и залить:
    ```bash
    esphome run yingfa-invertor.yaml
+
+## Известные проблемы
+
+### CRC-ошибки (~10% опросов QPIGS)
+
+Симптом: `PI30 QPIGS: CRC ERROR RX=XXXX CALC=YYYY`, где RX и CALC
+отличаются на 1 бит.
+
+Причина: физическая — бит-флип на линии RS232.
+Ретрай в `fast_poll` спасает ситуацию.
+
+Что попробовать:
+- Соединить GND ESP и инвертора.
+- Заменить MAX3232 (дешёвые клоны часто дают эффект).
+- Конденсатор 100 нФ на VCC/GND MAX3232.
+- Укоротить/экранировать кабель до инвертора.
+- Снизить скорость до 1200 бод (если поддерживается).
+
+### `script took a long time (max is 50 ms)`
+
+Косметическое предупреждение ESPHome. Причина — цикл чтения UART
+ждёт тишины на линии. Не критично, можно игнорировать.
+
+### Battery Voltage = 12.80 V при отключённой АКБ
+
+Не баг парсинга — реальное значение на клеммах инвертора при
+отсутствии батареи. Ёмкость = 0 %, SCC = 0 В — тоже норма.
+
+## Протокол PI30 — заметки
+
+Полный формат команд см. в [`docs/protocol-notes.md`](docs/protocol-notes.md).
+
+Кратко:
+- Команда: ASCII + CRC-16/XMODEM (2 байта big-endian) + `0x0D`.
+- Ответ: `(` + ASCII тело + CRC + `0x0D`.
+- Для QPIGS/QPIRI/Q1/QPIWS ответ приходит цельным пакетом,
+  пауза между байтами минимальна.
+
+### Используемые команды
+
+| Команда | Назначение |
+|---|---|
+| QPIGS | Общие данные (20 полей) |
+| QPIRI | Настройки инвертора |
+| QMOD | Режим работы (1 символ) |
+| QPIWS | Флаги ошибок (32 бита) |
+| Q1 | Температуры NTC |
+| QVFW | Версия прошивки |
+| POP0X | Output Source Priority |
+| PGR0X | Input Voltage Range |
+| MNCHGCXXX | Max Charging Current |
+| PCP0X | Charger Source Priority |
+| PBCVxx.x | Battery Re-charge Voltage |
+| PBDVxx.x | Battery Re-discharge Voltage |
+| PCVVxx.x | Battery C.V. Voltage |
+| PSDVxx.x | Battery Cut-off Voltage |
+
+## Полезные ссылки
+
+- [ESPHome UART](https://esphome.io/components/uart.html)
+- [PI30 Protocol (Voltronic)](https://github.com/jblance/mpp-solar)
+- [Home Assistant Number](https://www.home-assistant.io/integrations/number/)
