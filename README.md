@@ -134,3 +134,8 @@ ESP8266 + MAX3232 + ESPHome с интеграцией в Home Assistant.
 - [ESPHome UART](https://esphome.io/components/uart.html)
 - [PI30 Protocol (Voltronic)](https://github.com/jblance/mpp-solar)
 - [Home Assistant Number](https://www.home-assistant.io/integrations/number/)
+
+## Лицензия
+
+Этот проект распространяется под лицензией MIT.
+Подробности — в файле [LICENSE](LICENSE).
