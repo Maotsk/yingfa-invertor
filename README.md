@@ -1,9 +1,9 @@
 # Yingfa 6.2kW PI30 Inverter — ESPHome Monitoring
 
 <p align="right">
-  <img src="https://img.shields.io/badge/Русский-текущий-lightgrey" alt="Русский">
+  <img src="https://img.shields.io/badge/Русский-lightgrey" alt="Русский">
   <a href="./README.en.md">
-    <img src="https://img.shields.io/badge/English-switch-blue" alt="English">
+    <img src="https://img.shields.io/badge/English-blue" alt="English">
   </a>
 </p>
 
