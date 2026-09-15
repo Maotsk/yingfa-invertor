@@ -1,10 +1,17 @@
 # Yingfa 6.2kW PI30 Inverter — ESPHome Monitoring
 
-**Русский** | [English](./README.en.md)
+<p align="right">
+  <img src="https://img.shields.io/badge/Русский-текущий-lightgrey" alt="Русский">
+  <a href="./README.en.md">
+    <img src="https://img.shields.io/badge/English-перейти-blue" alt="English">
+  </a>
+</p>
 
 ![ESPHome](https://img.shields.io/badge/ESPHome-2024.6%2B-blue)
 ![ESP8266](https://img.shields.io/badge/MCU-ESP8266-green)
 ![Protocol](https://img.shields.io/badge/protocol-PI30-orange)
+![GitHub release](https://img.shields.io/github/v/release/Maotsk/yingfa-invertor)
+![ESPHome Validation](https://github.com/Maotsk/yingfa-invertor/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 Мониторинг и управление инвертором **Yingfa 6.2kW** (протокол PI30) через
