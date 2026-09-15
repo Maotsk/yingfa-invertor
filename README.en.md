@@ -2,9 +2,9 @@
 
 <p align="right">
   <a href="./README.md">
-    <img src="https://img.shields.io/badge/Русский-перейти-blue" alt="Русский">
+    <img src="https://img.shields.io/badge/Русский-blue" alt="Русский">
   </a>
-  <img src="https://img.shields.io/badge/English-current-lightgrey" alt="English">
+  <img src="https://img.shields.io/badge/English-lightgrey" alt="English">
 </p>
 
 ![ESPHome](https://img.shields.io/badge/ESPHome-2024.6%2B-blue)
