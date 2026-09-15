@@ -1,0 +1,43 @@
+name: ESPHome Config Validation
+
+on:
+  push:
+    paths:
+      - 'yingfa-invertor.yaml'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'yingfa-invertor.yaml'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:  # ручной запуск из вкладки Actions
+
+jobs:
+  validate:
+    name: Validate ESPHome Config
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ESPHome
+        run: |
+          pip install esphome
+
+      - name: Create secrets stub
+        run: |
+          cat > secrets.yaml << 'EOF'
+          wifi_ssid: "CI_STUB_SSID"
+          wifi_password: "CI_STUB_PASSWORD"
+          yingfa_api_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          yingfa_ap_password: "CI_STUB_AP_PASSWORD"
+          EOF
+
+      - name: Validate config
+        run: |
+          esphome config yingfa-invertor.yaml
