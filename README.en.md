@@ -195,16 +195,7 @@ the same for all sensors:
 
 ---
 
-**1. AC Output Energy — inverter output**
-
-| Field | Value |
-|---|---|
-| Name | `Yingfa Inverter AC Energy` |
-| Input sensor | `sensor.yingfa_invertor_ac_output_active_power` |
-
----
-
-**2. PV Energy — solar panel generation**
+**1. PV Energy — solar panel generation**
 
 | Field | Value |
 |---|---|
@@ -213,7 +204,7 @@ the same for all sensors:
 
 ---
 
-**3. Battery Charge Energy**
+**2. Battery Charge Energy**
 
 | Field | Value |
 |---|---|
@@ -222,7 +213,7 @@ the same for all sensors:
 
 ---
 
-**4. Battery Discharge Energy**
+**3. Battery Discharge Energy**
 
 | Field | Value |
 |---|---|
@@ -231,7 +222,7 @@ the same for all sensors:
 
 ---
 
-**5. Grid Import Energy — consumption from grid**
+**4. Grid Import Energy — consumption from grid**
 
 | Field | Value |
 |---|---|
@@ -248,9 +239,7 @@ the same for all sensors:
 4. Under **Battery**, add:
    - `Battery Charge Energy`
    - `Battery Discharge Energy`
-5. Under **Individual devices**, add:
-   - `Yingfa Inverter AC Energy`
-6. Save.
+5. Save.
 
 ### Important
 
