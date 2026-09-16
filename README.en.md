@@ -305,6 +305,27 @@ Intervals are configurable in HA:
    ```bash
    esphome run yingfa-invertor.yaml
    ```
+   
+## Test Firmware
+
+The [`test/`](test/) folder contains two auxiliary firmware configs for
+verifying hardware and protocol — before flashing the main
+`yingfa-invertor.yaml`.
+
+They are useful when something doesn't work — to identify which link
+is broken (ESP, RS232-TTL module, or inverter).
+
+| File | What it checks |
+|---|---|
+| [`loopback.yaml`](test/loopback.yaml) | ESP + RS232-TTL module (TX-RX jumper) |
+| [`protocol-probe.yaml`](test/protocol-probe.yaml) | Inverter communication and PI30 packet format |
+
+⚠️ **Important:** test firmware uses the same pins (GPIO15/GPIO13) as
+the main config. They cannot be flashed at the same time — only one
+at a time.
+
+Detailed instructions, what to look for in the logs and how to read
+the messages — see [`test/README.md`](test/README.md).
 
 ## Known Issues
 
