@@ -1,0 +1,71 @@
+# test/loopback.yaml
+#
+# Тестовая прошивка для проверки UART-цепочки инвертора Yingfa.
+#
+# Использование:
+#   1. Залить на ESP8266 через ESPHome Dashboard.
+#   2. Поставить перемычку TX-RX на ESP (тест микроконтроллера).
+#   3. Посмотреть логи: если строка вернулась — узел жив.
+#   4. Переставить перемычку на модуль RS232-TTL (T1 OUT - R1 IN)
+#      и проверить ещё раз — теперь тестируется преобразователь.
+#
+# ВАЖНО: не заливайте одновременно с основной прошивкой yingfa-invertor.yaml —
+# они используют одни и те же пины.
+
+esphome:
+  name: yingfa-loopback-test
+  friendly_name: Yingfa Loopback Test
+
+esp8266:
+  board: nodemcuv2
+
+logger:
+  level: VERBOSE
+  baud_rate: 115200
+
+# Наш тестовый UART на GPIO15/GPIO13.
+# Логгер работает через UART0 (GPIO1/GPIO3) — конфликта нет.
+uart:
+  id: uart_test
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+  baud_rate: 2400
+  # Если тестируете ESP без модуля, можно поставить 115200 —
+  # но с модулем RS232-TTL нужно 2400, как у инвертора.
+
+# Кнопка ручного запуска теста (опционально — можно дёргать из HA).
+button:
+  - platform: template
+    name: "Run Loopback Test"
+    on_press:
+      - script.execute: loopback_test
+
+script:
+  - id: loopback_test
+    then:
+      - logger.log: "=== LOOPBACK TEST START ==="
+      - uart.write:
+          id: uart_test
+          data: "HELLO_FROM_ESP\r\n"
+      - delay: 200ms
+      - lambda: |-
+          int count = 0;
+          while (id(uart_test).available()) {
+            uint8_t b = id(uart_test).read();
+            ESP_LOGI("loopback", "RX[%d]: 0x%02X '%c'", count++, b,
+                     (b >= 32 && b < 127) ? (char)b : '.');
+          }
+          if (count == 0) {
+            ESP_LOGE("loopback", "НЕТ ОТВЕТА. Проверь перемычку и пины.");
+          } else {
+            ESP_LOGI("loopback", "Получено %d байт. Линия жива.", count);
+          }
+      - logger.log: "=== LOOPBACK TEST DONE ==="
+
+# Автозапуск при загрузке — чтобы сразу увидеть результат в логах.
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - delay: 2s
+      - script.execute: loopback_test
