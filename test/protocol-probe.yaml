@@ -1,0 +1,125 @@
+# test/protocol-probe.yaml
+#
+# Тестовая прошивка для разведки протокола инвертора Yingfa.
+#
+# Использование:
+#   1. Подключить инвертор к модулю RS232-TTL, модуль — к ESP.
+#   2. Залить эту прошивку.
+#   3. Нажать кнопку "Send QPIGS" (или дождаться автозапуска).
+#   4. Посмотреть в логах сырые байты ответа инвертора.
+#
+# Что проверяем:
+#   - Инвертор вообще отвечает?
+#   - Скорость 2400 бод — верная?
+#   - Формат пакета: '(' + ASCII + CRC + 0x0D
+#   - Пауза между байтами (инвертор отвечает не мгновенно)
+#   - Корректность CRC
+#
+# ВАЖНО: не заливайте одновременно с основной прошивкой yingfa-invertor.yaml.
+
+esphome:
+  name: yingfa-protocol-probe
+  friendly_name: Yingfa Protocol Probe
+
+esp8266:
+  board: nodemcuv2
+
+logger:
+  level: VERBOSE
+  baud_rate: 115200
+
+uart:
+  id: uart_inverter
+  tx_pin: GPIO15
+  rx_pin: GPIO13
+  baud_rate: 2400
+  # 2400 бод, 8N1 — стандарт PI30.
+  # Если инвертор молчит — попробуйте 1200 или 9600.
+
+button:
+  - platform: template
+    name: "Send QPIGS"
+    on_press:
+      - script.execute: probe_qpigs
+  - platform: template
+    name: "Send QPIRI"
+    on_press:
+      - script.execute: probe_qpiri
+  - platform: template
+    name: "Send QMOD"
+    on_press:
+      - script.execute: probe_qmod
+
+script:
+  # Собираем пакет PI30: команда + CRC-16/XMODEM + 0x0D.
+  - id: send_pi30
+    parameters:
+      cmd: string
+    then:
+      - lambda: |-
+          std::string cmd = cmd_;
+          uint16_t crc = 0x0000;
+          for (char c : cmd) {
+            crc ^= (uint8_t)c << 8;
+            for (int i = 0; i < 8; i++) {
+              if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
+              else crc <<= 1;
+            }
+          }
+          std::string packet = cmd;
+          packet += (char)((crc >> 8) & 0xFF);
+          packet += (char)(crc & 0xFF);
+          packet += (char)0x0D;
+          ESP_LOGI("probe", "TX: %s (CRC=0x%04X)", cmd.c_str(), crc);
+          id(uart_inverter).write_str(packet);
+
+  # Читаем всё, что пришло, и логируем сырые байты.
+  - id: read_response
+    then:
+      - delay: 500ms
+      - lambda: |-
+          int count = 0;
+          std::string line;
+          while (id(uart_inverter).available()) {
+            uint8_t b = id(uart_inverter).read();
+            ESP_LOGI("probe", "RX[%d]: 0x%02X '%c'", count++, b,
+                     (b >= 32 && b < 127) ? (char)b : '.');
+            line += (b >= 32 && b < 127) ? (char)b : '.';
+          }
+          if (count == 0) {
+            ESP_LOGE("probe", "НЕТ ОТВЕТА. Проверь распиновку, GND, скорость.");
+          } else {
+            ESP_LOGI("probe", "Всего %d байт. Строкой: %s", count, line.c_str());
+          }
+
+  - id: probe_qpigs
+    then:
+      - logger.log: "--- QPIGS (общие данные) ---"
+      - script.execute:
+          id: send_pi30
+          cmd: "QPIGS"
+      - script.execute: read_response
+
+  - id: probe_qpiri
+    then:
+      - logger.log: "--- QPIRI (настройки) ---"
+      - script.execute:
+          id: send_pi30
+          cmd: "QPIRI"
+      - script.execute: read_response
+
+  - id: probe_qmod
+    then:
+      - logger.log: "--- QMOD (режим работы) ---"
+      - script.execute:
+          id: send_pi30
+          cmd: "QMOD"
+      - script.execute: read_response
+
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - delay: 3s
+      - logger.log: "Автозапуск QPIGS через 3 секунды..."
+      - script.execute: probe_qpigs
