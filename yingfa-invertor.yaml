@@ -399,6 +399,9 @@ button:
 select:
 
   # Output Source Priority (Программа 01)
+  # Внимание: SBU Priority не поддерживается инвертором через RS232.
+  # Команды POP02..POP05 и POPM0..POPM3 возвращают NAK (проверено 2026-10-17).
+  # SBU можно переключить только вручную через панель инвертора.
   - platform: template
     name: "Output Source Priority"
     id: output_source_priority_select
@@ -406,7 +409,6 @@ select:
     options:
       - "Utility First"
       - "Solar First"
-      - "SBU Priority"
     lambda: |-
       return {id(output_source_priority_text)};
     set_action:
@@ -428,7 +430,6 @@ select:
                 std::string cmd;
                 if (x == "Utility First") cmd = "POP00";
                 else if (x == "Solar First") cmd = "POP01";
-                else if (x == "SBU Priority") cmd = "POP02";
                 if (!cmd.empty()) id(pi30_exchange).execute(cmd);
             - script.wait:
                 id: pi30_exchange
