@@ -355,6 +355,32 @@ silence. Not critical, can be ignored.
 Not a parsing bug — the real value at the inverter terminals with no
 battery connected. Capacity = 0 %, SCC = 0 V — also normal.
 
+### SBU Priority is not controllable via RS232
+
+The Yingfa 6.2kW inverter **does not accept** the `POP02`–`POP05` and
+`POPM0`–`POPM3` commands for switching Output Source Priority to SBU.
+All of them return `NAK` (verified 2026-10-17).
+
+**What works via RS232:**
+- `POP00` — Utility First ✅
+- `POP01` — Solar First ✅
+
+**What does not work:**
+- `POP02` — SBU Priority ❌
+- `POP03`–`POP05` ❌
+- `POPM0`–`POPM3` ❌
+
+Cause — Yingfa firmware limitation, not an ESPHome issue.
+Commands are sent correctly (CRC OK), the inverter receives them,
+but refuses to apply.
+
+**What to do:**
+- Switch SBU Priority **manually** via the inverter panel.
+- The Home Assistant `Output Source Priority` select exposes only
+  the working options (Utility First / Solar First).
+- Other settings (battery voltages, charge current, charge priority)
+  work fine via RS232 and are available from HA.
+  
 ## PI30 Protocol Notes
 
 Full command format see in [`docs/protocol-notes.md`](docs/protocol-notes.md).
